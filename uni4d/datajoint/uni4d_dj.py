@@ -1,4 +1,7 @@
 import datajoint as dj
+import tempfile
+import numpy as np
+import os
 import json
 from pose_pipeline import Video
 
@@ -100,6 +103,60 @@ class CoTracker(dj.Computed):
     def key_source(self):
         # Return the source of keys for this table
         return (Video & 'filename NOT LIKE "%.%"') * CoTrackerSettingsLookup
+
+@schema
+class UniDepthSettingsLookup(dj.Lookup):
+    definition = """
+    unidepth_settings_id: int unsigned
+    ---
+    use_gt_intrinsics: bool
+    use_v2: bool
+    """
+    contents = [
+        {'unidepth_settings_id': 1, 'use_gt_intrinsics': False, 'use_v2': False},
+        # Add more settings as needed
+    ]
+
+@schema
+class UniDepth(dj.Computed):
+    definition = """
+    # UniDepth model for depth estimation
+    -> Video
+    -> UniDepthSettingsLookup
+    ---
+    intrinsics: longblob
+    depth: attach@localattach 
+    """
+
+    def make(self, key):
+        capture = Video.get_robust_reader(key)
+
+        from uni4d.preprocess.unidepth import load_model, run_unidepth
+        kwargs = (UniDepthSettingsLookup & key).fetch1()
+        model = load_model(use_v2=kwargs['use_v2'])
+
+        output = run_unidepth(capture, model, use_gt_K=kwargs['use_gt_intrinsics'])
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.npy')
+        np.save(tmp_file.name, output['depth'].astype('float32'))
+        tmp_file.close()
+        
+        # add output dict to key
+        key['intrinsics'] = output['intrinsics']
+        
+        # Insert with the file path - DataJoint will handle copying the file
+        key['depth'] = tmp_file.name
+        self.insert1(key)
+        os.remove(tmp_file.name)
+        capture.release()
+
+    @property
+    def key_source(self):
+        # Return the source of keys for this table
+        return (Video & 'filename NOT LIKE "%.%"') * UniDepthSettingsLookup
+
+
+if __name__ == "__main__":
+    CoTracker.populate('filename LIKE "0502%"')
 
 
         

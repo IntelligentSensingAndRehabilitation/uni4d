@@ -154,6 +154,53 @@ class UniDepth(dj.Computed):
         # Return the source of keys for this table
         return (Video & 'filename NOT LIKE "%.%"') * UniDepthSettingsLookup
 
+@schema
+class DinoSam2SettingsLookup(dj.Lookup):
+    definition = """
+    dino_sam2_settings_id: int unsigned
+    ---
+    sam2_checkpoint: varchar(256)
+    sam2_model_config: varchar(256)
+    grounding_model: varchar(256)
+    """
+
+    contents = [
+        {'dino_sam2_settings_id': 1,
+        "grounding_model":"IDEA-Research/grounding-dino-base",
+        "sam2_checkpoint":"./preprocess/pretrained/sam2.1_hiera_large.pt",
+        "sam2_model_config":"configs/sam2.1/sam2.1_hiera_l.yaml",
+        }
+    ]
+
+
+
+@schema
+class DinoSam2(dj.Computed):
+    definition = """
+    -> DinoSam2SettingsLookup
+    -> RamGpt
+    ---
+    masks: attach@localattach  # Path to the output masks
+    obj_info: longblob
+    """
+    def make(self, key):
+        from uni4d.preprocess.dino_sam2 import get_sam2_models, run_sam2
+
+        dyn_objs = json.loads((RamGpt & key).fetch1("ram_gpt_output"))["dynamic"]
+        text_input = ". ".join(dyn_objs) + "."
+
+        grounding_model, sam2_checkpoint, sam2_model_config = (DinoSam2SettingsLookup & key).fetch1(
+            'grounding_model', 'sam2_checkpoint', 'sam2_model_config')
+        
+        cap = Video.get_robust_reader(key)
+        predictor, grounding_model, processor = get_sam2_models(
+            sam2_checkpoint, sam2_model_config, grounding_model)
+        masks_path, obj_info = run_sam2(cap, processor, predictor, grounding_model, text_input)
+
+        key['masks'] = masks_path
+        key['obj_info'] = obj_info
+        self.insert1(key)
+        os.remove(masks_path)
 
 if __name__ == "__main__":
     CoTracker.populate('filename LIKE "0502%"')

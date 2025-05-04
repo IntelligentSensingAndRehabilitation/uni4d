@@ -1,4 +1,5 @@
 import torch
+torch.cuda.set_per_process_memory_fraction(1.0, 0)  # The 0 means no pre-allocation
 import cv2
 import os
 # add to path

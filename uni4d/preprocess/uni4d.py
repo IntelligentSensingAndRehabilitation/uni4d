@@ -1,4 +1,5 @@
 import cv2
+import subprocess
 import numpy as np
 import os
 from PIL import Image
@@ -139,3 +140,49 @@ def create_uni4d_workspace(key):
         pil_img = Image.fromarray(frame_rgb)
         pil_img.save(f'{key["filename"]}_uni4d_workspace/video1/rgb/{frame_id:05d}.jpg')
         frame_id += 1
+
+def remove_uni4d_workspace(key):
+    """
+    Remove the uni4d workspace for the given key.
+    """
+    workspace_path = f'{key["filename"]}_uni4d_workspace'
+    if os.path.exists(workspace_path):
+        import shutil
+        shutil.rmtree(workspace_path)
+        print(f"Removed workspace: {workspace_path}")
+    else:
+        print(f"Workspace does not exist: {workspace_path}")
+
+def uni4d_to_datajoint(key):
+    fused_4d_path = f'{key["filename"]}_uni4d_workspace/fused_4d.npz'
+    if not os.path.exists(fused_4d_path):
+        raise FileNotFoundError(f"Fused 4D data not found at {fused_4d_path}")
+    
+    fused_4d = np.load(fused_4d_path, allow_pickle=True)
+    c2w = fused_4d["c2w"]
+    intrinsices = fused_4d["Ks"]
+
+    return {"c2w": c2w, "intrinsics": intrinsices}
+
+def run_uni4d(key):
+    cuda_devices = os.environ.get('CUDA_VISIBLE_DEVICES')
+    config_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../config/config_demo.yaml")
+    )
+    run_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../run.py"))
+    command = [
+        "python", run_path,
+        "--gpu", "0",
+        "--workdir", f"{key['filename']}_uni4d_workspace",
+        "--config", config_path,
+    ]
+    try:
+        print(f"Running command: {' '.join(command)}")
+        subprocess.run(command, check=True)
+        print("Uni4D processing completed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error during Uni4D processing: {e}")
+        return str(e)
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return str(e)

@@ -8,3 +8,4 @@ dev/
 data/
 sam_mask/
 *.egg-info
+*_uni4d_workspace

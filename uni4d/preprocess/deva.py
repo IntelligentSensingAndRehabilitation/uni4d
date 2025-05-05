@@ -123,4 +123,5 @@ def deva_workspace_to_datajoint(key):
 
     fname = tempfile.NamedTemporaryFile(delete=False, suffix=".npz")
     np.savez(fname.name, masks=masks)
+    fname.close()
     return fname.name, args, pred

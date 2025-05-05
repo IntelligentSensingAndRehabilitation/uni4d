@@ -1,3 +1,5 @@
+import torch
+torch.cuda.set_per_process_memory_fraction(1.0, 0)  # The 0 means no pre-allocation
 import cv2
 import datajoint as dj
 import tempfile
@@ -9,6 +11,36 @@ from pose_pipeline import Video
 
 schema = dj.schema("uni4d")
 
+class DownsampledCapture:
+    def __init__(self, capture, downsample_factor):
+        self.capture = capture
+        self.downsample_factor = downsample_factor
+
+    def read(self):
+        ret, frame = self.capture.read()
+        if ret:
+            if self.downsample_factor > 1:
+                h, w = frame.shape[:2]
+                new_h, new_w = h // self.downsample_factor, w // self.downsample_factor
+                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return ret, frame
+
+    def get(self, prop_id):
+        if prop_id == cv2.CAP_PROP_FRAME_WIDTH:
+            return self.capture.get(prop_id) / self.downsample_factor
+        elif prop_id == cv2.CAP_PROP_FRAME_HEIGHT:
+            return self.capture.get(prop_id) / self.downsample_factor
+        return self.capture.get(prop_id)
+
+    def set(self, prop_id, value):
+        return self.capture.set(prop_id, value)
+
+    def release(self):
+        self.capture.release()
+
+    def __getattr__(self, name):
+        """Forward any undefined attributes/methods to the underlying capture object"""
+        return getattr(self.capture, name)
 
 @schema
 class RamGptSettingsLookup(dj.Lookup):
@@ -233,6 +265,7 @@ class DinoSam2(dj.Computed):
         grounding_model, sam2_checkpoint, sam2_model_config = (
             DinoSam2SettingsLookup & key
         ).fetch1("grounding_model", "sam2_checkpoint", "sam2_model_config")
+        sam2_checkpoint = '/home/jd/projects/uni4d/preprocess/pretrained/sam2.1_hiera_large.pt'
 
         cap = Video.get_robust_reader(key)
         downsample_factor = (RamGptSettingsLookup & key).fetch1("downsample")
@@ -293,52 +326,40 @@ class Uni4d(dj.Computed):
     -> DinoSam2
     -> Deva
     ---
-    uni4d_output: attach@localattach  # Path to the output Uni4D results
+    c2w : longblob  # Camera-to-world transformation matrix
+    intrinsics: longblob
     """
 
-    def make(self, key):
-        pass
+    class Fused4d(dj.Part):
+        definition = """
+        -> master
+        ---
+        fused_4d: attach@localattach  # Path to the fused 4D data 
+        """
 
-    def key_source(self):
-        # Return the source of keys for this table
-        # TODO: may want to check and make sure the downsamples are consistent here but not necessary now
-        return (
-            RamGpt * CoTracker * UniDepth * DinoSam2 * Deva
-            & 'filename NOT LIKE "%.%"'
-        )
-
+    def make(self, key, save_fused=True):
+        from uni4d.preprocess.uni4d import run_uni4d, uni4d_to_datajoint, remove_uni4d_workspace, create_uni4d_workspace
+        # Create the workspace for Uni4D
+        create_uni4d_workspace(key)
+        # Run Uni4D on the created workspace
+        run_uni4d(key)
+        # Convert the results to DataJoint format
+        res = uni4d_to_datajoint(key)
+        # Store the results in the key
+        key["c2w"] = res["c2w"]
+        key["intrinsics"] = res["intrinsics"]
+        self.insert1(key)
+        if save_fused:
+            # Save the fused 4D data
+            fused_4d_path = f'{key["filename"]}_uni4d_workspace/uni4d/fused_4d.npz'
+            self.Fused4D.insert1({"master": key, "fused_4d": fused_4d_path})
+        print(f"Processed {key['filename']} with Uni4D.")
+        # Remove the workspace after processing
+        remove_uni4d_workspace(key)
 
 if __name__ == "__main__":
-    CoTracker.populate('filename LIKE "0502%"')
+    CoTracker.populate('filename LIKE "0502%" AND cotracker_settings_id = 2')
+    CoTracker.populate('filename LIKE "0601%" AND cotracker_settings_id = 2')
+    # Uni4d.populate()
 
 
-class DownsampledCapture:
-    def __init__(self, capture, downsample_factor):
-        self.capture = capture
-        self.downsample_factor = downsample_factor
-
-    def read(self):
-        ret, frame = self.capture.read()
-        if ret:
-            if self.downsample_factor > 1:
-                h, w = frame.shape[:2]
-                new_h, new_w = h // self.downsample_factor, w // self.downsample_factor
-                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        return ret, frame
-
-    def get(self, prop_id):
-        if prop_id == cv2.CAP_PROP_FRAME_WIDTH:
-            return self.capture.get(prop_id) / self.downsample_factor
-        elif prop_id == cv2.CAP_PROP_FRAME_HEIGHT:
-            return self.capture.get(prop_id) / self.downsample_factor
-        return self.capture.get(prop_id)
-
-    def set(self, prop_id, value):
-        return self.capture.set(prop_id, value)
-
-    def release(self):
-        self.capture.release()
-
-    def __getattr__(self, name):
-        """Forward any undefined attributes/methods to the underlying capture object"""
-        return getattr(self.capture, name)

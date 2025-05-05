@@ -475,7 +475,7 @@ class Deva(dj.Computed):
 class Uni4d(dj.Computed):
     definition = """
     -> RamGpt
-    -> CoTracker
+    -> CoTracker.Section
     -> UniDepth
     -> DinoSam2
     -> Deva
@@ -493,6 +493,7 @@ class Uni4d(dj.Computed):
 
     def make(self, key, save_fused=True):
         from uni4d.preprocess.uni4d import run_uni4d, uni4d_to_datajoint, remove_uni4d_workspace, create_uni4d_workspace
+        base_key = key.copy()
         # Create the workspace for Uni4D
         create_uni4d_workspace(key)
         # Run Uni4D on the created workspace
@@ -505,8 +506,8 @@ class Uni4d(dj.Computed):
         self.insert1(key)
         if save_fused:
             # Save the fused 4D data
-            fused_4d_path = f'{key["filename"]}_uni4d_workspace/video1/uni4d/fused_4d.npz'
-            self.Fused4D.insert1({"master": key, "fused_4d": fused_4d_path})
+            fused_4d_path = f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/uni4d/demo/fused_4d.npz'
+            self.Fused4d.insert1({**base_key, "fused_4d": fused_4d_path})
         print(f"Processed {key['filename']} with Uni4D.")
         # Remove the workspace after processing
         remove_uni4d_workspace(key)

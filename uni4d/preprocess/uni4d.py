@@ -5,7 +5,6 @@ import os
 from PIL import Image
 import json
 
-
 def create_uni4d_workspace(key):
     from uni4d.datajoint.uni4d_dj import (
         RamGpt,
@@ -18,30 +17,31 @@ def create_uni4d_workspace(key):
         CoTrackerSettingsLookup,
         UniDepthSettingsLookup,
         DownsampledCapture,
+        BoundedCapture,
         Deva,
     )
     from pose_pipeline import Video
 
     """Modifying uni4d to not work from the command line is too much work"""
-    os.makedirs(f'{key["filename"]}_uni4d_workspace', exist_ok=True)
-    os.makedirs(f'{key["filename"]}_uni4d_workspace/video1', exist_ok=True)
-    os.makedirs(f'{key["filename"]}_uni4d_workspace/video1/rgb', exist_ok=True)
-    os.makedirs(f'{key["filename"]}_uni4d_workspace/video1/gsam2', exist_ok=True)
-    os.makedirs(f'{key["filename"]}_uni4d_workspace/video1/gsam2/mask', exist_ok=True)
-    os.makedirs(f'{key["filename"]}_uni4d_workspace/video1/cotracker', exist_ok=True)
-    os.makedirs(f'{key["filename"]}_uni4d_workspace/video1/deva', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/rgb', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/gsam2', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/gsam2/mask', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/cotracker', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/deva', exist_ok=True)
     os.makedirs(
-        f'{key["filename"]}_uni4d_workspace/video1/deva/Annotations', exist_ok=True
+        f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/deva/Annotations', exist_ok=True
     )
-    os.makedirs(f'{key["filename"]}_uni4d_workspace/video1/ram', exist_ok=True)
-    os.makedirs(f'{key["filename"]}_uni4d_workspace/video1/unidepth', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/ram', exist_ok=True)
+    os.makedirs(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/unidepth', exist_ok=True)
 
     # fetch and save ramgpt data
     ram_output, ram_downsample = (RamGpt * RamGptSettingsLookup & key).fetch1(
         "ram_gpt_output", "downsample"
     )
     ram_output = json.loads(ram_output)  # ram_gpt_output is a JSON string
-    ram_fname = f'{key["filename"]}_uni4d_workspace/video1/ram/tags.json'
+    ram_fname = f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/ram/tags.json'
     json.dump(ram_output, open(ram_fname, "w"), indent=4)
 
     # fetch and save cotracker data
@@ -52,15 +52,19 @@ def create_uni4d_workspace(key):
         cotracker_init_frames,
         cotracker_orig_shape,
         cotracker_downsample,
-    ) = (CoTracker * CoTrackerSettingsLookup & key).fetch1(
+        cotracker_start_frame,
+        cotracker_end_frame,
+    ) = (CoTracker.Section * CoTrackerSettingsLookup & key).fetch1(
         "tracks",
         "visibilities",
         "confidences",
         "init_frames",
         "orig_shape",
         "downsample",
+        "start_frame",
+        "end_frame",
     )
-    cotracker_fname = f'{key["filename"]}_uni4d_workspace/video1/cotracker/results.npz'
+    cotracker_fname = f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/cotracker/results.npz'
     np.savez(
         cotracker_fname,
         all_confidences=cotracker_confidences,
@@ -69,17 +73,17 @@ def create_uni4d_workspace(key):
         init_frames=cotracker_init_frames,
         orig_shape=cotracker_orig_shape,
     )
-    # TODO: may have to do the filtered_results.npz as well
 
     # fetch and save unidepth data
     uni_depth, unidepth_intrinsics, unidepth_downsample = (
         UniDepth * UniDepthSettingsLookup & key
     ).fetch1("depth", "intrinsics", "downsample")
     uni_depth = np.load(uni_depth)
-    uni_depth_fname = f'{key["filename"]}_uni4d_workspace/video1/unidepth/depth.npy'
-    np.save(uni_depth_fname, uni_depth)
+    uni_depth_section = uni_depth[cotracker_start_frame : cotracker_end_frame]
+    uni_depth_fname = f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/unidepth/depth.npy'
+    np.save(uni_depth_fname, uni_depth_section)
     intrinsics_fname = (
-        f'{key["filename"]}_uni4d_workspace/video1/unidepth/intrinsics.npy'
+        f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/unidepth/intrinsics.npy'
     )
     np.save(intrinsics_fname, unidepth_intrinsics)
 
@@ -90,17 +94,19 @@ def create_uni4d_workspace(key):
 
     # write every frame of mask to video1/gsam2/mask/XXXX.png (mask is an np.ndarray of shape (N, H, W, 3))
     mask = np.load(mask)["masks"]
+    mask = mask[cotracker_start_frame : cotracker_end_frame]
 
     for frame_id, mask_frame in enumerate(mask):
         pil_img = Image.fromarray(mask_frame)
         pil_img.save(
-            f'{key["filename"]}_uni4d_workspace/video1/gsam2/mask/{frame_id:05d}.png'
+            f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/gsam2/mask/{frame_id:05d}.png'
         )
 
     # write json to video1/gsam2/mask/XXXX.json
+    json_list = json_list[cotracker_start_frame : cotracker_end_frame]
     for json_id, json_data in enumerate(json_list):
         with open(
-            f'{key["filename"]}_uni4d_workspace/video1/gsam2/mask/{json_id:05d}.json',
+            f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/gsam2/mask/{json_id:05d}.json',
             "w",
         ) as f:
             json.dump(json_data, f)
@@ -118,17 +124,18 @@ def create_uni4d_workspace(key):
         "annotations", "args", "pred"
     )
     masks = np.load(deva_annotations)["masks"]
+    masks = masks[cotracker_start_frame : cotracker_end_frame]
     # save in deva/Annotations/XXXX.png
     for frame_id, mask_frame in enumerate(masks):
         pil_img = Image.fromarray(mask_frame)
         pil_img.save(
-            f'{key["filename"]}_uni4d_workspace/video1/deva/Annotations/{frame_id:05d}.png'
+            f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/deva/Annotations/{frame_id:05d}.png'
         )
 
     # rgb video
     video_key = (Video & key).fetch1("KEY")
     video_reader = Video.get_robust_reader(video_key)
-    video_reader = DownsampledCapture(video_reader, downsample_factor=ram_downsample)
+    video_reader = BoundedCapture(video_reader, start_frame=cotracker_start_frame, end_frame=cotracker_end_frame, downsample_factor=ram_downsample)
     # write every frame of video to video1/rgb/XXXX.png
     frame_id = 0
     while True:
@@ -138,14 +145,14 @@ def create_uni4d_workspace(key):
         # Convert BGR to RGB before saving
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(frame_rgb)
-        pil_img.save(f'{key["filename"]}_uni4d_workspace/video1/rgb/{frame_id:05d}.jpg')
+        pil_img.save(f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/rgb/{frame_id:05d}.jpg')
         frame_id += 1
 
 def remove_uni4d_workspace(key):
     """
     Remove the uni4d workspace for the given key.
     """
-    workspace_path = f'{key["filename"]}_uni4d_workspace'
+    workspace_path = f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace'
     if os.path.exists(workspace_path):
         import shutil
         shutil.rmtree(workspace_path)
@@ -154,7 +161,7 @@ def remove_uni4d_workspace(key):
         print(f"Workspace does not exist: {workspace_path}")
 
 def uni4d_to_datajoint(key):
-    fused_4d_path = f'{key["filename"]}_uni4d_workspace/video1/uni4d/fused_4d.npz'
+    fused_4d_path = f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace/video1/uni4d/demo/fused_4d.npz'
     if not os.path.exists(fused_4d_path):
         raise FileNotFoundError(f"Fused 4D data not found at {fused_4d_path}")
     
@@ -173,7 +180,7 @@ def run_uni4d(key):
     command = [
         "python", run_path,
         "--gpu", "0",
-        "--workdir", f"{key['filename']}_uni4d_workspace",
+        "--workdir", f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace',
         "--config", config_path,
     ]
     try:

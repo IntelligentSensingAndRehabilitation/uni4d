@@ -284,6 +284,29 @@ class Deva(dj.Computed):
         remove_deva_workspace(key)
         os.remove(mask_file)  # Clean up the mask file after insertion
 
+@schema
+class Uni4d(dj.Computed):
+    definition = """
+    -> RamGpt
+    -> CoTracker
+    -> UniDepth
+    -> DinoSam2
+    -> Deva
+    ---
+    uni4d_output: attach@localattach  # Path to the output Uni4D results
+    """
+
+    def make(self, key):
+        pass
+
+    def key_source(self):
+        # Return the source of keys for this table
+        # TODO: may want to check and make sure the downsamples are consistent here but not necessary now
+        return (
+            RamGpt * CoTracker * UniDepth * DinoSam2 * Deva
+            & 'filename NOT LIKE "%.%"'
+        )
+
 
 if __name__ == "__main__":
     CoTracker.populate('filename LIKE "0502%"')

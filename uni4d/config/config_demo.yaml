@@ -14,7 +14,7 @@ experiment_name: demo
 log: True
 opt_intrinsics: True
 depth_dir: "unidepth"
-cotracker_path: "cotrackerv3_10_50"
+cotracker_path: "cotracker"
 dyn_mask_dir: "deva"
 video: None
 loss_fn: "l1"

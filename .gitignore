@@ -2,3 +2,9 @@ __pycache__/
 *.py[cod]
 *.class
 *.jpg
+sam_vis/
+pretrained/
+dev/
+data/
+sam_mask/
+*.egg-info

@@ -42,6 +42,138 @@ class DownsampledCapture:
         """Forward any undefined attributes/methods to the underlying capture object"""
         return getattr(self.capture, name)
 
+class BoundedCapture:
+    """
+    A video capture wrapper that enforces frame boundaries and can be downsampled.
+    Acts as a transparent standalone capture for a section of video.
+    """
+    def __init__(self, capture, start_frame, end_frame, downsample_factor=1):
+        """
+        Args:
+            capture: OpenCV VideoCapture object
+            start_frame: First frame in this section
+            end_frame: Last frame in this section (exclusive)
+            downsample_factor: Factor to downsample frames
+        """
+        self.capture = capture
+        self.start_frame = start_frame
+        self.end_frame = end_frame
+        self.downsample_factor = downsample_factor
+        self.current_frame = start_frame
+        
+        # Position the capture at the start frame
+        self.capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        
+    def read(self):
+        """Read next frame, respecting section boundaries"""
+        if self.current_frame >= self.end_frame:
+            return False, None
+            
+        ret, frame = self.capture.read()
+        if ret:
+            self.current_frame += 1
+            if self.downsample_factor > 1:
+                h, w = frame.shape[:2]
+                new_h, new_w = h // self.downsample_factor, w // self.downsample_factor
+                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return ret, frame
+    
+    def get(self, prop_id):
+        """Get property, adjusted for section and downsampling"""
+        if prop_id == cv2.CAP_PROP_FRAME_COUNT:
+            return self.end_frame - self.start_frame
+        elif prop_id == cv2.CAP_PROP_POS_FRAMES:
+            return self.current_frame - self.start_frame
+        elif prop_id == cv2.CAP_PROP_FRAME_WIDTH:
+            return self.capture.get(prop_id) / self.downsample_factor
+        elif prop_id == cv2.CAP_PROP_FRAME_HEIGHT:
+            return self.capture.get(prop_id) / self.downsample_factor
+        return self.capture.get(prop_id)
+    
+    def set(self, prop_id, value):
+        """Set property, adjusted for section boundaries"""
+        if prop_id == cv2.CAP_PROP_POS_FRAMES:
+            # Adjust position relative to section start
+            self.current_frame = min(self.start_frame + value, self.end_frame)
+            return self.capture.set(prop_id, self.current_frame)
+        return self.capture.set(prop_id, value)
+    
+    def release(self):
+        """Release the underlying capture"""
+        self.capture.release()
+    
+    def isOpened(self):
+        """Check if capture is open and within section bounds"""
+        return self.capture.isOpened() and self.current_frame < self.end_frame
+    
+    def __getattr__(self, name):
+        """Forward any undefined attributes/methods to the underlying capture object"""
+        return getattr(self.capture, name)
+
+
+class SectionedCapture:
+    """
+    Divides a video into sections with configurable length and overlap.
+    Creates BoundedCapture objects for each section.
+    """
+    def __init__(self, key, downsample_factor=1, section_length=90, section_overlap=10):
+        self.key = key
+        self.downsample_factor = downsample_factor
+        self.section_length = section_length
+        self.section_overlap = section_overlap
+        
+        # Create a temporary capture to get total frames
+        temp_capture = Video.get_robust_reader(key)
+        self.total_frames = int(temp_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        temp_capture.release()
+    
+    def get_sections(self):
+        """
+        Returns a list of BoundedCapture objects, each representing one section.
+        Each section gets its own independent capture object.
+        """
+        sections = []
+        
+        # Calculate start positions for each section
+        start_frames = list(range(0, self.total_frames, self.section_length - self.section_overlap))
+        
+        # Make sure we don't start a section too close to the end
+        start_frames = [f for f in start_frames if f + self.section_length // 2 <= self.total_frames]
+        
+        if not start_frames:
+            # If video is too short, just use one section for the whole video
+            start_frames = [0]
+        
+        # Store all captures to release them later
+        self._captures = []
+        
+        for start_frame in start_frames:
+            # Create a NEW capture for each section instead of sharing one
+            capture = Video.get_robust_reader(self.key)
+            self._captures.append(capture)
+            
+            # Determine end frame (either section_length frames later or end of video)
+            end_frame = min(start_frame + self.section_length, self.total_frames)
+            
+            # Create a bounded capture for this section with its own capture object
+            bounded_capture = BoundedCapture(
+                capture=capture,
+                start_frame=start_frame,
+                end_frame=end_frame,
+                downsample_factor=self.downsample_factor
+            )
+            
+            sections.append(bounded_capture)
+        
+        return sections
+    
+    def release(self):
+        """Release all underlying captures"""
+        if hasattr(self, '_captures'):
+            for capture in self._captures:
+                capture.release()
+
+
 @schema
 class RamGptSettingsLookup(dj.Lookup):
     definition = """
@@ -102,6 +234,8 @@ class CoTrackerSettingsLookup(dj.Lookup):
     grid_size: int unsigned
     model_path: varchar(256)  # Path to the CoTracker model checkpoint
     downsample: int unsigned
+    section_length: int unsigned  # Length of each section in frames
+    section_overlap: int unsigned  # Overlap between sections in frames
     """
 
     contents = [
@@ -109,8 +243,10 @@ class CoTrackerSettingsLookup(dj.Lookup):
             "cotracker_settings_id": 1,
             "interval": 20,
             "grid_size": 25,
-            "model_path": "/home/jd/uni4d/preprocess/pretrained/scaled_offline.pth",
+            "model_path": "/home/jd/projects/uni4d/preprocess/pretrained/scaled_offline.pth",
             "downsample": 2,
+            "section_length": 90,  # Length of each section in frames
+            "section_overlap": 10,  # Overlap between sections in frames
         },
         # Add more settings as needed
     ]
@@ -122,40 +258,58 @@ class CoTracker(dj.Computed):
     # CoTracker model for 4D pose estimation
     -> Video
     -> CoTrackerSettingsLookup
-    ---
-    tracks: longblob
-    visibilities: longblob
-    confidences: longblob
-    init_frames: longblob
-    orig_shape: longblob  # Original shape of the video frames
+    """
+
+    class Section(dj.Part):
+        definition = """
+        -> master
+        start_frame: int unsigned  # Start frame of the section
+        end_frame: int unsigned  # End frame of the section
+        ---
+        tracks: longblob
+        visibilities: longblob
+        confidences: longblob
+        init_frames: longblob
+        orig_shape: longblob  # Original shape of the video frames
     """
 
     def make(self, key):
-        capture = Video.get_robust_reader(key)
-        downsample_factor = (CoTrackerSettingsLookup & key).fetch1("downsample")
-        capture = DownsampledCapture(capture, downsample_factor)
+        # capture = Video.get_robust_reader(key)
+        downsample_factor, section_length, section_overlap = (CoTrackerSettingsLookup & key).fetch1("downsample", "section_length", "section_overlap")
+        sectioned = SectionedCapture(key, downsample_factor=downsample_factor, section_length=section_length, section_overlap=section_overlap)#.get_sectioned_captures()
+        captures = sectioned.get_sections()
 
         from uni4d.preprocess.cotracker import load_model, process_capture
 
         kwargs = (CoTrackerSettingsLookup & key).fetch1()
         model = load_model(kwargs["model_path"])
 
-        output = process_capture(
-            capture, model, interval=kwargs["interval"], grid_size=kwargs["grid_size"]
-        )
-        # add output dict to key
-        key.update(
-            {
-                "tracks": output["tracks"],
-                "visibilities": output["visibilities"],
-                "confidences": output["confidences"],
-                "init_frames": output["init_frames"],
-                "orig_shape": output["orig_shape"],
-            }
-        )
-        self.insert1(key)
-        print(f"Processed {key['filename']} with CoTracker model.")
-        capture.release()
+        self.insert1(key)  # Insert the main key first
+        for capture in captures:
+            start_frame = capture.start_frame
+            end_frame = capture.end_frame
+            # print capture frame count
+            frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            print(f"Processing section from {start_frame} to {end_frame} with {frame_count} frames.")
+            base_key = key.copy()
+            output = process_capture(
+                capture, model, interval=kwargs["interval"], grid_size=kwargs["grid_size"]
+            )
+            # add output dict to key
+            base_key.update(
+                {
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "tracks": output["tracks"],
+                    "visibilities": output["visibilities"],
+                    "confidences": output["confidences"],
+                    "init_frames": output["init_frames"],
+                    "orig_shape": output["orig_shape"],
+                }
+            )
+            self.Section.insert1(base_key)
+            print(f"Processed {key['filename']} with CoTracker model.")
+            capture.release()
 
     @property
     def key_source(self):
@@ -358,8 +512,8 @@ class Uni4d(dj.Computed):
         remove_uni4d_workspace(key)
 
 if __name__ == "__main__":
-    CoTracker.populate('filename LIKE "0502%" AND cotracker_settings_id = 2')
-    CoTracker.populate('filename LIKE "0601%" AND cotracker_settings_id = 2')
+    CoTracker.populate('filename LIKE "0502_20230222%" AND cotracker_settings_id=2 AND video_project = "GAIT_CONTROLS"',reserve_jobs=True,suppress_errors=True)
+    CoTracker.populate('filename LIKE "0601%" AND cotracker_settings_id = 1 AND video_project = "GAIT_CONTROLS"', reserve_jobs=True, suppress_errors=True)
     # Uni4d.populate()
 
 

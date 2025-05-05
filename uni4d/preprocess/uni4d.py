@@ -154,7 +154,7 @@ def remove_uni4d_workspace(key):
         print(f"Workspace does not exist: {workspace_path}")
 
 def uni4d_to_datajoint(key):
-    fused_4d_path = f'{key["filename"]}_uni4d_workspace/fused_4d.npz'
+    fused_4d_path = f'{key["filename"]}_uni4d_workspace/video1/uni4d/fused_4d.npz'
     if not os.path.exists(fused_4d_path):
         raise FileNotFoundError(f"Fused 4D data not found at {fused_4d_path}")
     

@@ -351,7 +351,7 @@ class Uni4d(dj.Computed):
         self.insert1(key)
         if save_fused:
             # Save the fused 4D data
-            fused_4d_path = f'{key["filename"]}_uni4d_workspace/uni4d/fused_4d.npz'
+            fused_4d_path = f'{key["filename"]}_uni4d_workspace/video1/uni4d/fused_4d.npz'
             self.Fused4D.insert1({"master": key, "fused_4d": fused_4d_path})
         print(f"Processed {key['filename']} with Uni4D.")
         # Remove the workspace after processing

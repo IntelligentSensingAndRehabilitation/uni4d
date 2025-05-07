@@ -12,7 +12,7 @@ dyn_smooth_weight_t: 10.0
 dyn_laplacian_weight_t: 100.0
 experiment_name: demo
 log: True
-opt_intrinsics: True
+opt_intrinsics: False
 depth_dir: "unidepth"
 cotracker_path: "cotracker"
 dyn_mask_dir: "deva"

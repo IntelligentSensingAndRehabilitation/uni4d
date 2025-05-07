@@ -720,7 +720,7 @@ class Engine():
     def load_gt(self):
 
         if not self.opt.opt_intrinsics:
-            intrinsic = np.load(os.path.join(self.opt.BASE, "K.npy"))
+            intrinsic = np.load(os.path.join(self.opt.BASE, "unidepth/intrinsics.npy"))
             self.K_gt = torch.tensor(intrinsic).float()
 
             if len(self.K_gt.shape) == 2:

@@ -11,7 +11,7 @@ from pathlib import Path
 from supervision.draw.color import ColorPalette
 import sys
 
-sys.path.insert(0, "../Grounded-SAM-2")
+sys.path.insert(0, "Grounded-SAM-2")
 
 from utils.supervision_utils import CUSTOM_COLOR_MAP
 from PIL import Image

@@ -20,7 +20,7 @@ def load_model(use_v2=False):
 
 load_model.model = None
 
-def run_unidepth(cap, model, use_gt_K=False):
+def run_unidepth(cap, model, downsample_factor=1, use_gt_K=False):
     images = []
 
     if not cap.isOpened():
@@ -65,7 +65,14 @@ def run_unidepth(cap, model, use_gt_K=False):
         K[1][-1] = h / 2
 
     else:
-        raise NotImplementedError("Have not implemented ground truth intrinsics yet.")
+        # K = torch.from_numpy(np.load(os.path.join(BASE, video, "K.npy"))).float()
+        K = np.array(
+            [[1.43333476e03, 0.00000000e00, 5.39500000e02], [0.00000000e00, 1.43333476e03, 9.59500000e02], [0.00000000e00, 0.00000000e00, 1.00000000e00]]
+        ) / downsample_factor
+        K[-1,-1] = 1.0 # this is not downsampled
+        K = torch.from_numpy(K).float()
+        if len(K.shape) == 2:
+            K = K.unsqueeze(0).repeat(images.shape[0], 1, 1)
 
     if len(K.shape) == 2:
         K = K.unsqueeze(0).repeat(images.shape[0], 1, 1)

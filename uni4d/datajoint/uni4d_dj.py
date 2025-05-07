@@ -186,7 +186,7 @@ class RamGptSettingsLookup(dj.Lookup):
     contents = [
         {
             "ram_gpt_settings_id": 1,
-            "ram_gpt_settings": '{"image_size":384, "model_path": "/home/jd/uni4d/preprocess/pretrained/ram_swin_large_14m.pth"}',
+            "ram_gpt_settings": '{"image_size":384, "model_path": "/home/jd/projects/uni4d/preprocess/pretrained/ram_swin_large_14m.pth"}',
             "downsample": 2,
         }
         # Add more settings as needed
@@ -358,7 +358,7 @@ class UniDepth(dj.Computed):
         kwargs = (UniDepthSettingsLookup & key).fetch1()
         model = load_model(use_v2=kwargs["use_v2"])
 
-        output = run_unidepth(capture, model, use_gt_K=kwargs["use_gt_intrinsics"])
+        output = run_unidepth(capture, model, downsample_factor, use_gt_K=kwargs["use_gt_intrinsics"])
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".npy")
         np.save(tmp_file.name, output["depth"].astype("float32"))
         tmp_file.close()
@@ -513,8 +513,14 @@ class Uni4d(dj.Computed):
         remove_uni4d_workspace(key)
 
 if __name__ == "__main__":
-    CoTracker.populate('filename LIKE "0502_20230222%" AND cotracker_settings_id=2 AND video_project = "GAIT_CONTROLS"',reserve_jobs=True,suppress_errors=True)
-    CoTracker.populate('filename LIKE "0601%" AND cotracker_settings_id = 1 AND video_project = "GAIT_CONTROLS"', reserve_jobs=True, suppress_errors=True)
-    # Uni4d.populate()
+    res = 'filename LIKE "0601_%" AND video_project = "GAIT_CONTROLS"'
+    # RamGpt.populate(res, reserve_jobs=True, suppress_errors=False)
+    # UniDepth.populate(res, reserve_jobs=True, suppress_errors=True)
+    # DinoSam2.populate(res, reserve_jobs=True, suppress_errors=False)
+    # Deva.populate(res, reserve_jobs=True, suppress_errors=False)
+    # Uni4d.populate(res, reserve_jobs=True, suppress_errors=True)
+    # CoTracker.populate('filename LIKE "0502_20230222%" AND cotracker_settings_id=1 AND video_project = "GAIT_CONTROLS"',reserve_jobs=True,suppress_errors=True)
+    CoTracker.populate(res, reserve_jobs=True, suppress_errors=True)
+    # Uni4d.populate(res,reserve_jobs=True, suppress_errors=True)
 
 

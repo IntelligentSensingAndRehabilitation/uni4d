@@ -179,7 +179,7 @@ def run_uni4d(key):
     run_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../run.py"))
     command = [
         "python", run_path,
-        "--gpu", "0",
+        "--gpu", cuda_devices,
         "--workdir", f'{key["filename"]}_{key["start_frame"]}_{key["end_frame"]}_uni4d_workspace',
         "--config", config_path,
     ]

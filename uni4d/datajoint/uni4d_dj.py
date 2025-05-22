@@ -123,9 +123,11 @@ class SectionedCapture:
         self.section_overlap = section_overlap
         
         # Create a temporary capture to get total frames
-        temp_capture = Video.get_robust_reader(key)
+        video = Video.get_robust_reader(key,return_cap=False)
+        temp_capture = cv2.VideoCapture(video)
         self.total_frames = int(temp_capture.get(cv2.CAP_PROP_FRAME_COUNT))
         temp_capture.release()
+        os.remove(video)
     
     def get_sections(self):
         """
@@ -146,11 +148,14 @@ class SectionedCapture:
         
         # Store all captures to release them later
         self._captures = []
+        self._videos = []
         
         for start_frame in start_frames:
             # Create a NEW capture for each section instead of sharing one
-            capture = Video.get_robust_reader(self.key)
+            video = Video.get_robust_reader(self.key,return_cap=False)
+            capture = cv2.VideoCapture(video)
             self._captures.append(capture)
+            self._videos.append(video)
             
             # Determine end frame (either section_length frames later or end of video)
             end_frame = min(start_frame + self.section_length, self.total_frames)
@@ -172,6 +177,9 @@ class SectionedCapture:
         if hasattr(self, '_captures'):
             for capture in self._captures:
                 capture.release()
+        if hasattr(self, '_videos'):
+            for video in self._videos:
+                os.remove(video)
 
 
 @schema
@@ -204,7 +212,8 @@ class RamGpt(dj.Computed):
     """
 
     def make(self, key):
-        capture = Video.get_robust_reader(key)
+        video = Video.get_robust_reader(key, return_cap=False)
+        capture = cv2.VideoCapture(video)
         downsample_factor = (RamGptSettingsLookup & key).fetch1("downsample")
         capture = DownsampledCapture(capture, downsample_factor)
 
@@ -218,6 +227,7 @@ class RamGpt(dj.Computed):
         self.insert1(key)
         print(f"Processed {key} with RAM+GPT model.")
         capture.release()
+        os.remove(video)  # Remove the video file after processing
 
     @property
     def key_source(self):
@@ -349,7 +359,8 @@ class UniDepth(dj.Computed):
     """
 
     def make(self, key):
-        capture = Video.get_robust_reader(key)
+        video = Video.get_robust_reader(key,return_cap=False)
+        capture = cv2.VideoCapture(video)
         downsample_factor = (UniDepthSettingsLookup & key).fetch1("downsample")
         capture = DownsampledCapture(capture, downsample_factor)
 
@@ -371,6 +382,7 @@ class UniDepth(dj.Computed):
         self.insert1(key)
         os.remove(tmp_file.name)
         capture.release()
+        os.remove(video)  # Remove the video file after processing
 
     @property
     def key_source(self):
@@ -421,7 +433,8 @@ class DinoSam2(dj.Computed):
         ).fetch1("grounding_model", "sam2_checkpoint", "sam2_model_config")
         sam2_checkpoint = '/home/jd/projects/uni4d/preprocess/pretrained/sam2.1_hiera_large.pt'
 
-        cap = Video.get_robust_reader(key)
+        video = Video.get_robust_reader(key,return_cap=False)
+        cap = cv2.VideoCapture(video)
         downsample_factor = (RamGptSettingsLookup & key).fetch1("downsample")
         cap = DownsampledCapture(cap, downsample_factor)
 
@@ -436,6 +449,8 @@ class DinoSam2(dj.Computed):
         key["obj_info"] = obj_info
         self.insert1(key)
         os.remove(masks_path)
+        cap.release()
+        os.remove(video)
 
 
 @schema
@@ -513,10 +528,10 @@ class Uni4d(dj.Computed):
         remove_uni4d_workspace(key)
 
 if __name__ == "__main__":
-    res = 'filename LIKE "0601_%" AND video_project = "GAIT_CONTROLS"'
+    res = 'video_project = "GAIT_CONTROLS" AND filename LIKE "060%"'
     # RamGpt.populate(res, reserve_jobs=True, suppress_errors=False)
-    # UniDepth.populate(res, reserve_jobs=True, suppress_errors=True)
-    # DinoSam2.populate(res, reserve_jobs=True, suppress_errors=False)
+    UniDepth.populate(res, reserve_jobs=True, suppress_errors=True)
+    #DinoSam2.populate(res, reserve_jobs=True, suppress_errors=False)
     # Deva.populate(res, reserve_jobs=True, suppress_errors=False)
     # Uni4d.populate(res, reserve_jobs=True, suppress_errors=True)
     # CoTracker.populate('filename LIKE "0502_20230222%" AND cotracker_settings_id=1 AND video_project = "GAIT_CONTROLS"',reserve_jobs=True,suppress_errors=True)
